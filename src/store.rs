@@ -1,4 +1,7 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use async_trait::async_trait;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -8,7 +11,7 @@ type Data = Value;
 
 #[async_trait]
 pub trait Persistence {
-    async fn find(&mut self, query: Option<Value>) -> anyhow::Result<Vec<Data>>;
+    async fn find(&mut self, collection: &str, query: Option<Value>) -> anyhow::Result<Vec<Data>>;
 
     // fn find_one(&mut self, query: Option<Value>) -> anyhow::Result<Option<Data>>;
 
@@ -33,10 +36,13 @@ impl Store {
 
     pub async fn find<T>(&mut self, id: &str) -> anyhow::Result<Vec<T>>
     where
-        T: DeserializeOwned,
+        T: DeserializeOwned + Collection,
     {
         let mut persistence = self.persistence.lock().unwrap();
-        let values = persistence.find(Some(serde_json::from_str(id)?)).await?;
+        let collection = T::name();
+        let values = persistence
+            .find(&collection, Some(serde_json::from_str(id)?))
+            .await?;
 
         let mut new: Vec<T> = vec![];
         for v in values.into_iter() {
@@ -47,14 +53,14 @@ impl Store {
 }
 
 struct TestPersistence {
-    name: String,
+    records: HashMap<String, Vec<Data>>,
 }
 
 #[async_trait]
 impl Persistence for TestPersistence {
-    async fn find(&mut self, query: Option<Value>) -> anyhow::Result<Vec<Data>> {
-        println!("find");
-        Ok(vec![])
+    async fn find(&mut self, collection: &str, query: Option<Value>) -> anyhow::Result<Vec<Data>> {
+        let records = self.records.get(collection).unwrap();
+        Ok(records.clone())
     }
     // async fn find_one<T>(&mut self, query: Option<Value>) -> anyhow::Result<Option<T>> {
     //     println!("find_one");
@@ -80,17 +86,54 @@ struct User {
     name: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct Product {
+    id: String,
+    name: String,
+}
+
+pub trait Collection {
+    fn name() -> String;
+}
+
+impl Collection for User {
+    fn name() -> String {
+        "users".to_string()
+    }
+}
+
+impl Collection for Product {
+    fn name() -> String {
+        "products".to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
 
     #[tokio::test]
     async fn test_find() -> anyhow::Result<()> {
-        let mut store = Store::new(TestPersistence {
-            name: "Felipe".to_string(),
-        });
-        let user: Vec<User> = store.find("123").await?;
-        println!("{:?}", user);
+        let mut records = HashMap::new();
+        let user = serde_json::to_value(User {
+            id: "123".to_string(),
+            name: "John".to_string(),
+        })?;
+        let product = serde_json::to_value(Product {
+            id: "456".to_string(),
+            name: "Apple".to_string(),
+        })?;
+        records.insert("users".to_string(), vec![user]);
+        records.insert("products".to_string(), vec![product]);
+        let persistence = TestPersistence { records };
+        let mut store = Store::new(persistence);
+        let users: Vec<User> = store.find("123").await?;
+        let products: Vec<Product> = store.find("123").await?;
+
+        println!("{:?}", users);
+        println!("{:?}", products);
         Ok(())
     }
 }

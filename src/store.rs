@@ -7,13 +7,19 @@ use async_trait::async_trait;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::query::Query;
+
 type Data = Value;
 
 #[async_trait]
 pub trait Persistence {
-    async fn find(&mut self, collection: &str, query: Option<Value>) -> anyhow::Result<Vec<Data>>;
+    async fn find(&mut self, collection: &str, query: Option<Query>) -> anyhow::Result<Vec<Data>>;
 
-    // fn find_one(&mut self, query: Option<Value>) -> anyhow::Result<Option<Data>>;
+    async fn find_one(
+        &mut self,
+        collection: &str,
+        query: Option<Query>,
+    ) -> anyhow::Result<Option<Data>>;
 
     // fn create(&mut self, record: &Data) -> anyhow::Result<Data>;
 
@@ -34,21 +40,32 @@ impl Store {
         }
     }
 
-    pub async fn find<T>(&mut self, id: &str) -> anyhow::Result<Vec<T>>
+    pub async fn find<T>(&mut self, query: Option<Query>) -> anyhow::Result<Vec<T>>
     where
         T: DeserializeOwned + Collection,
     {
         let mut persistence = self.persistence.lock().unwrap();
         let collection = T::name();
-        let values = persistence
-            .find(&collection, Some(serde_json::from_str(id)?))
-            .await?;
+        let values = persistence.find(&collection, None).await?;
 
         let mut new: Vec<T> = vec![];
         for v in values.into_iter() {
             new.push(serde_json::from_value(v)?);
         }
         Ok(new)
+    }
+
+    pub async fn find_one<T>(&mut self, query: Option<Query>) -> anyhow::Result<Option<T>>
+    where
+        T: DeserializeOwned + Collection,
+    {
+        let mut persistence = self.persistence.lock().unwrap();
+        let collection = T::name();
+        let value = persistence.find_one(&collection, None).await?;
+        match value {
+            Some(value) => Ok(Some(serde_json::from_value(value)?)),
+            None => Ok(None),
+        }
     }
 }
 
@@ -58,14 +75,20 @@ struct TestPersistence {
 
 #[async_trait]
 impl Persistence for TestPersistence {
-    async fn find(&mut self, collection: &str, query: Option<Value>) -> anyhow::Result<Vec<Data>> {
+    async fn find(&mut self, collection: &str, query: Option<Query>) -> anyhow::Result<Vec<Data>> {
         let records = self.records.get(collection).unwrap();
         Ok(records.clone())
     }
-    // async fn find_one<T>(&mut self, query: Option<Value>) -> anyhow::Result<Option<T>> {
-    //     println!("find_one");
-    //     Ok(None)
-    // }
+
+    async fn find_one(
+        &mut self,
+        collection: &str,
+        query: Option<Query>,
+    ) -> anyhow::Result<Option<Data>> {
+        let records = self.records.get(collection).unwrap().clone();
+        Ok(records.get(0).cloned())
+    }
+
     // async fn create<T>(&mut self, record: &T) -> anyhow::Result<T> {
     //     println!("create");
     //     Ok(record.clone())
@@ -129,11 +152,18 @@ mod tests {
         records.insert("products".to_string(), vec![product]);
         let persistence = TestPersistence { records };
         let mut store = Store::new(persistence);
-        let users: Vec<User> = store.find("123").await?;
-        let products: Vec<Product> = store.find("123").await?;
+        let users: Vec<User> = store.find(None).await?;
+        let products: Vec<Product> = store.find(None).await?;
 
         println!("{:?}", users);
         println!("{:?}", products);
+
+        let user: Option<User> = store.find_one(None).await?;
+        let product: Option<Product> = store.find_one(None).await?;
+
+        println!("{:?}", user);
+        println!("{:?}", product);
+
         Ok(())
     }
 }

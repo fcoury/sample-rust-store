@@ -1,6 +1,7 @@
 // use serde_json::{json, Map, Value};
 // use std::sync::Arc;
 
+mod query;
 mod store;
 
 fn main() {

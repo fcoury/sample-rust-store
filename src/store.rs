@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::query::Query;
+use crate::{identity::Identity, query::Query};
 
 type Data = Value;
 
@@ -33,10 +33,26 @@ pub struct Store {
     persistence: Arc<Mutex<dyn Persistence + Sync>>,
 }
 
+#[allow(dead_code)]
 impl Store {
     fn new(persistence: impl Persistence + Sync + 'static) -> Self {
         Self {
             persistence: Arc::new(Mutex::new(persistence)),
+        }
+    }
+
+    pub async fn get<T>(&mut self, id: Value) -> anyhow::Result<Option<T>>
+    where
+        T: DeserializeOwned + Collection + Identity,
+    {
+        let collection = T::name();
+        let query = T::identity_query(id);
+
+        let mut persistence = self.persistence.lock().unwrap();
+        let data = persistence.find_one(&collection, Some(query)).await?;
+        match data {
+            Some(data) => Ok(Some(serde_json::from_value(data)?)),
+            None => Ok(None),
         }
     }
 
@@ -46,7 +62,7 @@ impl Store {
     {
         let mut persistence = self.persistence.lock().unwrap();
         let collection = T::name();
-        let values = persistence.find(&collection, None).await?;
+        let values = persistence.find(&collection, query).await?;
 
         let mut new: Vec<T> = vec![];
         for v in values.into_iter() {
@@ -61,7 +77,7 @@ impl Store {
     {
         let mut persistence = self.persistence.lock().unwrap();
         let collection = T::name();
-        let value = persistence.find_one(&collection, None).await?;
+        let value = persistence.find_one(&collection, query).await?;
         match value {
             Some(value) => Ok(Some(serde_json::from_value(value)?)),
             None => Ok(None),
@@ -75,7 +91,7 @@ struct TestPersistence {
 
 #[async_trait]
 impl Persistence for TestPersistence {
-    async fn find(&mut self, collection: &str, query: Option<Query>) -> anyhow::Result<Vec<Data>> {
+    async fn find(&mut self, collection: &str, _query: Option<Query>) -> anyhow::Result<Vec<Data>> {
         let records = self.records.get(collection).unwrap();
         Ok(records.clone())
     }
@@ -83,7 +99,7 @@ impl Persistence for TestPersistence {
     async fn find_one(
         &mut self,
         collection: &str,
-        query: Option<Query>,
+        _query: Option<Query>,
     ) -> anyhow::Result<Option<Data>> {
         let records = self.records.get(collection).unwrap().clone();
         Ok(records.get(0).cloned())
@@ -107,6 +123,24 @@ impl Persistence for TestPersistence {
 struct User {
     id: String,
     name: String,
+}
+
+impl Identity for User {
+    fn identity_query(id: Value) -> Query {
+        Query::builder().eq("id", id).build()
+    }
+
+    fn identity(&self) -> Value {
+        todo!()
+    }
+
+    fn key(&self) -> &str {
+        todo!()
+    }
+
+    fn id(&self) -> Value {
+        todo!()
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -138,18 +172,47 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_find() -> anyhow::Result<()> {
-        let mut records = HashMap::new();
-        let user = serde_json::to_value(User {
+    async fn test_identity() -> anyhow::Result<()> {
+        let user1 = serde_json::to_value(User {
             id: "123".to_string(),
             name: "John".to_string(),
         })?;
-        let product = serde_json::to_value(Product {
+        let user2 = serde_json::to_value(User {
+            id: "456".to_string(),
+            name: "Jane".to_string(),
+        })?;
+
+        let mut records = HashMap::new();
+        records.insert("users".to_string(), vec![user1, user2]);
+        let persistence = TestPersistence { records };
+        let mut store = Store::new(persistence);
+        let user = store.get::<User>(Value::String("123".to_string())).await?;
+        println!("{:?}", user);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_find() -> anyhow::Result<()> {
+        let mut records = HashMap::new();
+        let user1 = serde_json::to_value(User {
+            id: "123".to_string(),
+            name: "John".to_string(),
+        })?;
+        let user2 = serde_json::to_value(User {
+            id: "456".to_string(),
+            name: "Jane".to_string(),
+        })?;
+        let product1 = serde_json::to_value(Product {
             id: "456".to_string(),
             name: "Apple".to_string(),
         })?;
-        records.insert("users".to_string(), vec![user]);
-        records.insert("products".to_string(), vec![product]);
+        let product2 = serde_json::to_value(Product {
+            id: "789".to_string(),
+            name: "Banana".to_string(),
+        })?;
+        records.insert("users".to_string(), vec![user1, user2]);
+        records.insert("products".to_string(), vec![product1, product2]);
         let persistence = TestPersistence { records };
         let mut store = Store::new(persistence);
         let users: Vec<User> = store.find(None).await?;

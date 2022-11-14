@@ -91,18 +91,41 @@ struct TestPersistence {
 
 #[async_trait]
 impl Persistence for TestPersistence {
-    async fn find(&mut self, collection: &str, _query: Option<Query>) -> anyhow::Result<Vec<Data>> {
+    async fn find(&mut self, collection: &str, query: Option<Query>) -> anyhow::Result<Vec<Data>> {
         let records = self.records.get(collection).unwrap();
-        Ok(records.clone())
+        match query {
+            Some(query) => {
+                let mut new: Vec<Data> = vec![];
+                for record in records.into_iter() {
+                    if query.matches(record)? {
+                        new.push(record.clone());
+                    }
+                }
+                Ok(new)
+            }
+            None => Ok(records.clone()),
+        }
     }
 
     async fn find_one(
         &mut self,
         collection: &str,
-        _query: Option<Query>,
+        query: Option<Query>,
     ) -> anyhow::Result<Option<Data>> {
         let records = self.records.get(collection).unwrap().clone();
-        Ok(records.get(0).cloned())
+
+        let Some(query) = query else {
+            return Ok(records.get(0).cloned());
+        };
+
+        let records = self.records.get(collection).unwrap().clone();
+        for record in records.into_iter() {
+            if query.matches(&record)? {
+                return Ok(Some(record.clone()));
+            }
+        }
+
+        Ok(None)
     }
 
     // async fn create<T>(&mut self, record: &T) -> anyhow::Result<T> {
@@ -186,8 +209,8 @@ mod tests {
         records.insert("users".to_string(), vec![user1, user2]);
         let persistence = TestPersistence { records };
         let mut store = Store::new(persistence);
-        let user = store.get::<User>(Value::String("123".to_string())).await?;
-        println!("{:?}", user);
+        let user = store.get::<User>(Value::String("456".to_string())).await?;
+        assert_eq!(user.unwrap().name, "Jane");
 
         Ok(())
     }

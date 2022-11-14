@@ -1,3 +1,4 @@
+use anyhow::{anyhow, Context};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -12,6 +13,18 @@ impl Query {
     pub fn builder() -> QueryBuilder {
         QueryBuilder::new()
     }
+
+    pub fn matches(&self, value: &Value) -> anyhow::Result<bool> {
+        if let Some(filter) = &self.filter {
+            for filter_item in filter {
+                if !filter_item.matches(value)? {
+                    return Ok(false);
+                }
+            }
+        }
+
+        Ok(true)
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -21,10 +34,25 @@ pub enum QueryFilterItem {
     Condition(QueryFilterCondition),
 }
 
+impl QueryFilterItem {
+    pub fn matches(&self, value: &Value) -> anyhow::Result<bool> {
+        match self {
+            QueryFilterItem::Filter(filter) => filter.matches(value),
+            QueryFilterItem::Condition(condition) => condition.matches(value),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct QueryFilterFilter {
     operation: QueryFilterOperation,
     filter: QueryFilter,
+}
+
+impl QueryFilterFilter {
+    pub fn matches(&self, value: &Value) -> anyhow::Result<bool> {
+        self.filter.matches(value)
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -33,11 +61,91 @@ pub struct QueryFilterCondition {
     filter: Vec<QueryFilterItem>,
 }
 
+impl QueryFilterCondition {
+    pub fn matches(&self, value: &Value) -> anyhow::Result<bool> {
+        for filter_item in &self.filter {
+            if !filter_item.matches(value)? {
+                return Ok(false);
+            }
+        }
+
+        Ok(true)
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct QueryFilter {
     field: String,
     operator: QueryFilterOperator,
     value: Value,
+}
+
+impl QueryFilter {
+    pub fn matches(&self, value: &Value) -> anyhow::Result<bool> {
+        let field_value = value.get(&self.field).context(format!(
+            "field '{}' not found on value: {:?}",
+            &self.field, value
+        ))?;
+
+        match &self.operator {
+            QueryFilterOperator::Equals => Ok(field_value == &self.value),
+            QueryFilterOperator::NotEquals => Ok(field_value != &self.value),
+            QueryFilterOperator::LessThan => {
+                if let Value::Number(field_value) = field_value {
+                    if let Value::Number(value) = &self.value {
+                        let field_value = field_value.as_f64().context(format!(
+                            "can't transform field value {:?} to f64",
+                            field_value
+                        ))?;
+                        let value = value.as_f64().context(format!(
+                            "can't transform comparison value {:?} to f64",
+                            value
+                        ))?;
+                        Ok(field_value < value)
+                    } else {
+                        // false
+                        Err(anyhow!(
+                            "Error comparing values: {:?} < {:?}",
+                            field_value,
+                            value
+                        ))
+                    }
+                } else {
+                    Err(anyhow!(
+                        "Error comparing values: {:?} < {:?}",
+                        field_value,
+                        value
+                    ))
+                }
+            }
+            // QueryFilterOperator::LessThanOrEqual => field_value <= &self.value,
+            // QueryFilterOperator::GreaterThan => field_value > &self.value,
+            // QueryFilterOperator::GreaterThanOrEqual => field_value >= &self.value,
+            QueryFilterOperator::In => {
+                if let Value::Array(array) = &self.value {
+                    Ok(array.contains(field_value))
+                } else {
+                    Err(anyhow!(
+                        "Error comparing values: {:?} in {:?}",
+                        field_value,
+                        self.value
+                    ))
+                }
+            }
+            QueryFilterOperator::NotIn => {
+                if let Value::Array(array) = &self.value {
+                    Ok(!array.contains(field_value))
+                } else {
+                    Err(anyhow!(
+                        "Error comparing values: {:?} not in {:?}",
+                        field_value,
+                        self.value
+                    ))
+                }
+            }
+            operator => unimplemented!("operator {:?} not implemented", operator),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -202,6 +310,8 @@ mod tests {
                 .build()
             })
             .build();
+
+        // FIXME improve the test like test_query
         let json = serde_json::to_string(&query).unwrap();
         let expected = r#"{"filter":[{"type":"filter","operation":"and","filter":{"field":"id","operator":"equals","value":2}},{"type":"filter","operation":"or","filter":{"field":"name","operator":"equals","value":"John"}},{"type":"condition","operation":"and","filter":[{"type":"condition","operation":"and","filter":[{"type":"filter","operation":"and","filter":{"field":"id","operator":"notEquals","value":1}},{"type":"filter","operation":"and","filter":{"field":"name","operator":"equals","value":"Felipe"}},{"type":"condition","operation":"and","filter":[{"type":"filter","operation":"and","filter":{"field":"age","operator":"greaterThan","value":18}}]}]}]}],"sort":null,"limit":null}"#;
         assert_eq!(json, expected);
@@ -275,6 +385,9 @@ mod tests {
             }),
         };
 
-        println!("{}", serde_json::to_string_pretty(&query).unwrap());
+        // FIXME improve the test like test_query
+        let expected = r#"{"filter":[{"type":"condition","operation":"and","filter":[{"type":"filter","operation":"and","filter":{"field":"id","operator":"notEquals","value":1}},{"type":"filter","operation":"and","filter":{"field":"age","operator":"greaterThan","value":18}}]}],"sort":[{"field":"name","direction":"1"}],"limit":{"limit":10,"offset":30}}"#;
+        let json = serde_json::to_string(&query).unwrap();
+        assert_eq!(json, expected);
     }
 }

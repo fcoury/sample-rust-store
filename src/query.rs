@@ -14,6 +14,7 @@ impl Query {
         QueryBuilder::new()
     }
 
+    #[allow(unused)]
     pub fn from_json(json: &str) -> anyhow::Result<Query> {
         serde_json::from_str(json)
             .context(format!("Failed to parse query from JSON string: {}", json))
@@ -62,8 +63,8 @@ impl QueryFilterFilter {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct QueryFilterCondition {
-    operation: QueryFilterOperation,
-    filter: Vec<QueryFilterItem>,
+    pub operation: QueryFilterOperation,
+    pub filter: Vec<QueryFilterItem>,
 }
 
 impl QueryFilterCondition {

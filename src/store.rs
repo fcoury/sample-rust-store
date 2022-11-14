@@ -285,19 +285,15 @@ mod tests {
         let pool = persistence.pool.clone();
         let conn = pool.get().await?;
         conn.execute("DROP TABLE IF EXISTS users", &[]).await?;
+        conn.execute("CREATE TABLE users (data JSONB)", &[]).await?;
         conn.execute(
-            "CREATE TABLE users (id VARCHAR(255) PRIMARY KEY, data JSONB)",
-            &[],
+            "INSERT INTO users VALUES ($1)",
+            &[&serde_json::json!({"id": "123", "name": "John"})],
         )
         .await?;
         conn.execute(
-            "INSERT INTO users VALUES ($1, $2)",
-            &[&"123", &serde_json::json!({"id": "123", "name": "John"})],
-        )
-        .await?;
-        conn.execute(
-            "INSERT INTO users VALUES ($1, $2)",
-            &[&"456", &serde_json::json!({"id": "456", "name": "Jane"})],
+            "INSERT INTO users VALUES ($1)",
+            &[&serde_json::json!({"id": "456", "name": "Jane"})],
         )
         .await?;
 

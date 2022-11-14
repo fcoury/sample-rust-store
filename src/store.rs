@@ -4,10 +4,15 @@ use std::{
 };
 
 use async_trait::async_trait;
+use bb8_postgres::tokio_postgres::NoTls;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{identity::Identity, query::Query};
+use crate::{
+    identity::Identity,
+    query::{Query, QueryLimit},
+    sql::to_sql,
+};
 
 type Data = Value;
 
@@ -142,6 +147,63 @@ impl Persistence for TestPersistence {
     // }
 }
 
+#[derive(Clone, Debug)]
+struct PostgresPersistence {
+    pool: bb8::Pool<bb8_postgres::PostgresConnectionManager<NoTls>>,
+}
+
+impl PostgresPersistence {
+    async fn new(conn_str: &str) -> anyhow::Result<Self> {
+        let manager =
+            bb8_postgres::PostgresConnectionManager::new_from_stringlike(conn_str, NoTls)?;
+        let pool = bb8::Pool::builder().build(manager).await?;
+        Ok(Self { pool })
+    }
+}
+
+#[async_trait]
+impl Persistence for PostgresPersistence {
+    async fn find(&mut self, table: &str, query: Option<Query>) -> anyhow::Result<Vec<Data>> {
+        let conn = self.pool.get().await?;
+
+        let (sql, params) = to_sql(table, &query)?;
+        let params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
+            params.iter().map(|v| v as _).collect();
+        let rows = conn.query(&sql, &params).await?;
+        let mut new: Vec<Data> = vec![];
+        for row in rows.into_iter() {
+            let data: Data = row.get(0);
+            new.push(data);
+        }
+        Ok(new)
+    }
+
+    async fn find_one(
+        &mut self,
+        table: &str,
+        query: Option<Query>,
+    ) -> anyhow::Result<Option<Data>> {
+        let conn = self.pool.get().await?;
+
+        let (sql, params) = match query {
+            Some(query) => {
+                let mut query = query.clone();
+                query.limit = Some(QueryLimit {
+                    limit: Some(1),
+                    offset: None,
+                });
+                to_sql(table, &Some(query))?
+            }
+            None => (format!("SELECT * FROM {} LIMIT 1", table), vec![]),
+        };
+        let params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
+            params.iter().map(|v| v as _).collect();
+        let row = conn.query_one(sql.as_str(), &params).await?;
+        let data: Data = row.get(0);
+        Ok(Some(data))
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct User {
     id: String,
@@ -209,6 +271,37 @@ mod tests {
         records.insert("users".to_string(), vec![user1, user2]);
         let persistence = TestPersistence { records };
         let mut store = Store::new(persistence);
+        let user = store.get::<User>(Value::String("456".to_string())).await?;
+        assert_eq!(user.unwrap().name, "Jane");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_identity_with_sql() -> anyhow::Result<()> {
+        let persistence =
+            PostgresPersistence::new("postgres://postgres:postgres@localhost:5432/mflow").await?;
+        let pool = persistence.pool.clone();
+        let conn = pool.get().await?;
+        conn.execute("DROP TABLE IF EXISTS users", &[]).await?;
+        conn.execute(
+            "CREATE TABLE users (id VARCHAR(255) PRIMARY KEY, data JSONB)",
+            &[],
+        )
+        .await?;
+        conn.execute(
+            "INSERT INTO users VALUES ($1, $2)",
+            &[&"123", &serde_json::json!({"id": "123", "name": "John"})],
+        )
+        .await?;
+        conn.execute(
+            "INSERT INTO users VALUES ($1, $2)",
+            &[&"456", &serde_json::json!({"id": "456", "name": "Jane"})],
+        )
+        .await?;
+
+        let mut store = Store::new(persistence.clone());
         let user = store.get::<User>(Value::String("456".to_string())).await?;
         assert_eq!(user.unwrap().name, "Jane");
 

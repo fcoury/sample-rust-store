@@ -2,16 +2,21 @@ use anyhow::{anyhow, Context};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Query {
-    filter: Option<Vec<QueryFilterItem>>,
-    sort: Option<Vec<QuerySortItem>>,
-    limit: Option<QueryLimit>,
+    pub filter: Option<Vec<QueryFilterItem>>,
+    pub sort: Option<Vec<QuerySortItem>>,
+    pub limit: Option<QueryLimit>,
 }
 
 impl Query {
     pub fn builder() -> QueryBuilder {
         QueryBuilder::new()
+    }
+
+    pub fn from_json(json: &str) -> anyhow::Result<Query> {
+        serde_json::from_str(json)
+            .context(format!("Failed to parse query from JSON string: {}", json))
     }
 
     pub fn matches(&self, value: &Value) -> anyhow::Result<bool> {
@@ -45,8 +50,8 @@ impl QueryFilterItem {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct QueryFilterFilter {
-    operation: QueryFilterOperation,
-    filter: QueryFilter,
+    pub operation: QueryFilterOperation,
+    pub filter: QueryFilter,
 }
 
 impl QueryFilterFilter {
@@ -75,9 +80,9 @@ impl QueryFilterCondition {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct QueryFilter {
-    field: String,
-    operator: QueryFilterOperator,
-    value: Value,
+    pub field: String,
+    pub operator: QueryFilterOperator,
+    pub value: Value,
 }
 
 impl QueryFilter {
@@ -187,8 +192,8 @@ pub enum QuerySortDirection {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct QueryLimit {
-    limit: Option<u32>,
-    offset: Option<u32>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Default)]

@@ -3,6 +3,7 @@
 
 mod identity;
 mod query;
+mod sql;
 mod store;
 
 fn main() {

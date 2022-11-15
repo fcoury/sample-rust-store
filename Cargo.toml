@@ -10,6 +10,7 @@ anyhow = "1.0.66"
 async-trait = "0.1.58"
 bb8 = "0.8.0"
 bb8-postgres = "0.8.1"
+dotenv = "0.15.0"
 serde = {version = "1.0.147", features = ["derive"]}
 serde_json = "1.0.87"
 tokio = {version = "1.21.2", features = ["full"]}

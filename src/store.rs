@@ -252,7 +252,7 @@ impl Collection for Product {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::{collections::HashMap, env};
 
     use super::*;
 
@@ -279,9 +279,10 @@ mod tests {
 
     #[tokio::test]
     #[ignore]
-    async fn test_identity_with_sql() -> anyhow::Result<()> {
-        let persistence =
-            PostgresPersistence::new("postgres://postgres:postgres@localhost:5432/mflow").await?;
+    async fn test_identity_with_postgres() -> anyhow::Result<()> {
+        dotenv::dotenv().ok();
+
+        let persistence = PostgresPersistence::new(&env::var("DATABASE_URL")?).await?;
         let pool = persistence.pool.clone();
         let conn = pool.get().await?;
         conn.execute("DROP TABLE IF EXISTS users", &[]).await?;
